@@ -1,15 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { auth, signInWithGoogle, logOut, onAuthChange, saveUserData, loadUserData } from "./firebase";
 
 const MODEL = "claude-sonnet-4-20250514";
-
-// ═══════════════════════════════════════════════════════════════════
-// SIMPLE HASH (for password storage — not crypto-grade but works in-browser)
-// ═══════════════════════════════════════════════════════════════════
-async function hashPassword(pw) {
-  const enc = new TextEncoder().encode(pw + "sb2salt!@#");
-  const buf = await crypto.subtle.digest("SHA-256", enc);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // THEMES
@@ -294,166 +286,6 @@ function CameraModal({ onCapture, onClose, t }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// AUTH SCREEN (Login / Sign Up)
-// ═══════════════════════════════════════════════════════════════════
-function AuthScreen({ t, onLogin }) {
-  const [mode, setMode] = useState("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [displayName, setDisplayName] = useState("");
-  const [avatar, setAvatar] = useState("😊");
-  const avatars = ["😊","😎","🤓","🧠","✨","🦊","🐱","🌸","🔥","💫","🎯","🌈","🍀","⭐","🎵","🦋","🐻","🌙"];
-
-  const bs = mkBtn(t);
-  const inputSt = { width: "100%", padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${t.border}`, fontSize: 15, fontFamily: "inherit", color: t.text, background: t.surface, boxSizing: "border-box" };
-
-  const handleLogin = async () => {
-    if (!username.trim() || !password) { setError("Enter username and password"); return; }
-    setBusy(true); setError("");
-    try {
-      const r = await window.storage.get(`sb2:user:${username.trim().toLowerCase()}`);
-      if (!r || !r.value) { setError("Account not found"); setBusy(false); return; }
-      const account = JSON.parse(r.value);
-      const hashed = await hashPassword(password);
-      if (account.passwordHash !== hashed) { setError("Wrong password"); setBusy(false); return; }
-      try { await window.storage.set("sb2:session", username.trim().toLowerCase()); } catch {}
-      onLogin(username.trim().toLowerCase(), account);
-    } catch { setError("Something went wrong"); }
-    setBusy(false);
-  };
-
-  const handleSignupNext = () => {
-    if (!username.trim()) { setError("Pick a username"); return; }
-    if (username.trim().length < 3) { setError("Username must be at least 3 characters"); return; }
-    if (/[^a-zA-Z0-9._-]/.test(username.trim())) { setError("Letters, numbers, . _ - only"); return; }
-    if (!password) { setError("Enter a password"); return; }
-    if (password.length < 4) { setError("Password must be at least 4 characters"); return; }
-    if (password !== confirmPw) { setError("Passwords don't match"); return; }
-    setError("");
-    setDisplayName(username.trim());
-    setMode("signup-profile");
-  };
-
-  const handleSignupFinish = async () => {
-    if (!displayName.trim()) { setError("Enter your name"); return; }
-    setBusy(true); setError("");
-    const uname = username.trim().toLowerCase();
-    try {
-      try {
-        const existing = await window.storage.get(`sb2:user:${uname}`);
-        if (existing && existing.value) { setError("Username already taken"); setBusy(false); return; }
-      } catch {}
-      const hashed = await hashPassword(password);
-      const account = {
-        username: uname,
-        passwordHash: hashed,
-        profile: { name: displayName.trim(), avatar, createdAt: Date.now() },
-        classes: DEFAULT_CLASSES,
-        selected: DEFAULT_CLASSES[0].id,
-        difficulty: "medium",
-        theme: "pink",
-        history: [],
-        knowledge: {},
-        convos: {},
-      };
-      await window.storage.set(`sb2:user:${uname}`, JSON.stringify(account));
-      await window.storage.set("sb2:session", uname);
-      onLogin(uname, account);
-    } catch { setError("Something went wrong creating account"); }
-    setBusy(false);
-  };
-
-  return <div style={{ flex: 1, padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", animation: "fadeIn .3s ease" }}>
-    <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
-      <div style={{ fontSize: 52, marginBottom: 8 }}>{mode === "signup-profile" ? avatar : "📚"}</div>
-      <h1 className="grad-title" style={{ fontSize: 28, fontWeight: 800, marginBottom: 2 }}>AI Study Buddy</h1>
-      <p style={{ color: t.textMuted, fontSize: 13, marginBottom: 28 }}>
-        {mode === "login" ? "Sign in to your account" : mode === "signup" ? "Create a new account" : "Set up your profile"}
-      </p>
-
-      {error && <div style={{ padding: "8px 12px", background: `${t.red}12`, border: `1px solid ${t.red}30`, borderRadius: 10, marginBottom: 14, fontSize: 13, color: t.red, fontWeight: 600 }}>{error}</div>}
-
-      {mode === "login" && <>
-        <div style={{ textAlign: "left", marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "block" }}>Username</label>
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="your_username" autoFocus style={inputSt}
-            onKeyDown={e => { if (e.key === "Enter") document.getElementById("pw-input")?.focus(); }} />
-        </div>
-        <div style={{ textAlign: "left", marginBottom: 8 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "block" }}>Password</label>
-          <div style={{ position: "relative" }}>
-            <input id="pw-input" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" type={showPw ? "text" : "password"} style={{ ...inputSt, paddingRight: 44 }}
-              onKeyDown={e => { if (e.key === "Enter") handleLogin(); }} />
-            <button onClick={() => setShowPw(!showPw)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: t.textMuted }}>{showPw ? "🙈" : "👁️"}</button>
-          </div>
-        </div>
-        <div style={{ height: 12 }} />
-        <button onClick={handleLogin} disabled={busy} style={{ ...bs, width: "100%", padding: "14px", fontSize: 16, borderRadius: 14, opacity: busy ? 0.6 : 1 }}>
-          {busy ? "Signing in..." : `Sign In ${t.decoChar}`}
-        </button>
-        <p style={{ color: t.textMuted, fontSize: 13, marginTop: 16 }}>
-          Don't have an account?{" "}
-          <button onClick={() => { setMode("signup"); setError(""); setPassword(""); setConfirmPw(""); setShowPw(false); }} style={{ background: "none", border: "none", color: t.accent, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>Sign Up</button>
-        </p>
-      </>}
-
-      {mode === "signup" && <>
-        <div style={{ textAlign: "left", marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "block" }}>Choose a Username</label>
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. alex_2025" autoFocus style={inputSt} />
-          <p style={{ fontSize: 10, color: t.textMuted, marginTop: 3 }}>Letters, numbers, . _ - only</p>
-        </div>
-        <div style={{ textAlign: "left", marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "block" }}>Password</label>
-          <div style={{ position: "relative" }}>
-            <input value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 4 characters" type={showPw ? "text" : "password"} style={{ ...inputSt, paddingRight: 44 }} />
-            <button onClick={() => setShowPw(!showPw)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: t.textMuted }}>{showPw ? "🙈" : "👁️"}</button>
-          </div>
-        </div>
-        <div style={{ textAlign: "left", marginBottom: 20 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "block" }}>Confirm Password</label>
-          <input value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Type it again" type={showPw ? "text" : "password"} style={inputSt}
-            onKeyDown={e => { if (e.key === "Enter") handleSignupNext(); }} />
-        </div>
-        <button onClick={handleSignupNext} style={{ ...bs, width: "100%", padding: "14px", fontSize: 16, borderRadius: 14 }}>
-          Next →
-        </button>
-        <p style={{ color: t.textMuted, fontSize: 13, marginTop: 16 }}>
-          Already have an account?{" "}
-          <button onClick={() => { setMode("login"); setError(""); setPassword(""); setConfirmPw(""); setShowPw(false); }} style={{ background: "none", border: "none", color: t.accent, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>Sign In</button>
-        </p>
-      </>}
-
-      {mode === "signup-profile" && <>
-        <div style={{ textAlign: "left", marginBottom: 14 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, display: "block" }}>Display Name</label>
-          <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g. Alex" autoFocus style={inputSt} />
-        </div>
-        <div style={{ textAlign: "left", marginBottom: 24 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: t.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, display: "block" }}>Pick Your Avatar</label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {avatars.map(a => <button key={a} onClick={() => setAvatar(a)} style={{
-              width: 42, height: 42, borderRadius: 12, fontSize: 22,
-              border: `2px solid ${avatar === a ? t.accent : t.border}`,
-              background: avatar === a ? t.accentGlow : t.surfaceAlt,
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-            }}>{a}</button>)}
-          </div>
-        </div>
-        <button onClick={handleSignupFinish} disabled={busy || !displayName.trim()} style={{ ...bs, width: "100%", padding: "14px", fontSize: 16, borderRadius: 14, opacity: (busy || !displayName.trim()) ? 0.5 : 1 }}>
-          {busy ? "Creating account..." : `Let's Go! ${t.decoChar}`}
-        </button>
-        <button onClick={() => { setMode("signup"); setError(""); }} style={{ background: "none", border: "none", color: t.textMuted, cursor: "pointer", fontFamily: "inherit", fontSize: 13, marginTop: 12 }}>← Back</button>
-      </>}
-    </div>
-  </div>;
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // PROFILE EDITOR
 // ═══════════════════════════════════════════════════════════════════
 function ProfileEditor({ t, profile, onSave }) {
@@ -495,7 +327,7 @@ function ProfileEditor({ t, profile, onSave }) {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [firebaseUser, setFirebaseUser] = useState(null); // Firebase auth user object
   const [authChecked, setAuthChecked] = useState(false);
 
   const [page, setPage] = useState("home");
@@ -523,6 +355,7 @@ export default function App() {
   const fileRef = useRef(null);
   const chatEndRef = useRef(null);
   const [history, setHistory] = useState([]);
+  const [signInError, setSignInError] = useState("");
 
   useEffect(() => { researchRef.current = researchingClass; }, [researchingClass]);
   useEffect(() => { kbRef.current = knowledgeCache; }, [knowledgeCache]);
@@ -535,48 +368,65 @@ export default function App() {
   const convo = convoKey ? (convos[convoKey] || { messages: [], hintLevel: 0 }) : { messages: [], hintLevel: 0 };
 
   // ═══════════════════════════════════════════════════════════
-  // AUTH: Check session on mount
+  // AUTH: Listen for Firebase auth state
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
-    (async () => {
-      try {
-        const sess = await window.storage.get("sb2:session");
-        if (sess && sess.value) {
-          const uname = sess.value;
-          const r = await window.storage.get(`sb2:user:${uname}`);
-          if (r && r.value) {
-            const account = JSON.parse(r.value);
-            loadAccount(uname, account);
-            setAuthChecked(true);
-            return;
-          }
+    const unsub = onAuthChange(async (user) => {
+      if (user) {
+        setFirebaseUser(user);
+        // Load user data from Firestore
+        const data = await loadUserData(user.uid);
+        if (data) {
+          if (data.classes?.length) setClasses(data.classes);
+          if (data.selected) setSelectedClass(data.selected);
+          if (data.difficulty) setDifficulty(data.difficulty);
+          if (data.theme && THEMES[data.theme]) setThemeId(data.theme);
+          if (data.history?.length) setHistory(data.history);
+          if (data.knowledge) { setKnowledgeCache(data.knowledge); kbRef.current = data.knowledge; }
+          if (data.convos) setConvos(data.convos);
+          if (data.profile) setProfile(data.profile);
+          else setProfile({ name: user.displayName || "Student", avatar: "😊", createdAt: Date.now() });
+        } else {
+          // First time user — set defaults
+          const newProfile = { name: user.displayName || "Student", avatar: "😊", createdAt: Date.now() };
+          setProfile(newProfile);
+          await saveUserData(user.uid, {
+            profile: newProfile,
+            classes: DEFAULT_CLASSES,
+            selected: DEFAULT_CLASSES[0].id,
+            difficulty: "medium",
+            theme: "pink",
+            history: [],
+            knowledge: {},
+            convos: {},
+          });
         }
-      } catch {}
+        setStorageLoaded(true);
+        loaded.current = true;
+      } else {
+        setFirebaseUser(null);
+        setProfile(null);
+        setStorageLoaded(false);
+        loaded.current = false;
+      }
       setAuthChecked(true);
-    })();
+    });
+    return () => unsub();
   }, []);
 
-  const loadAccount = (uname, account) => {
-    setCurrentUser(uname);
-    if (account.profile) setProfile(account.profile);
-    if (account.classes?.length) setClasses(account.classes);
-    if (account.selected) setSelectedClass(account.selected);
-    if (account.difficulty) setDifficulty(account.difficulty);
-    if (account.theme && THEMES[account.theme]) setThemeId(account.theme);
-    if (account.history?.length) setHistory(account.history);
-    if (account.knowledge) { setKnowledgeCache(account.knowledge); kbRef.current = account.knowledge; }
-    if (account.convos) setConvos(account.convos);
-    setStorageLoaded(true);
-    loaded.current = true;
+  const handleGoogleSignIn = async () => {
+    setSignInError("");
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      console.error("Sign in error:", e);
+      setSignInError("Sign in failed. Try again.");
+    }
   };
-
-  const handleLogin = (uname, account) => { loadAccount(uname, account); };
 
   const handleLogout = async () => {
     await persistNow();
-    try { await window.storage.set("sb2:session", ""); } catch {}
-    setCurrentUser(null);
-    setProfile(null);
+    try { await logOut(); } catch {}
     setClasses(DEFAULT_CLASSES);
     setSelectedClass(DEFAULT_CLASSES[0].id);
     setConvos({});
@@ -586,12 +436,10 @@ export default function App() {
     setThemeId("pink");
     setDifficulty("medium");
     setPage("home");
-    setStorageLoaded(false);
-    loaded.current = false;
   };
 
   // ═══════════════════════════════════════════════════════════
-  // STORAGE — saves under user's key
+  // STORAGE — saves to Firestore under user's uid
   // ═══════════════════════════════════════════════════════════
   const loaded = useRef(false);
   const classesRef = useRef(classes);
@@ -601,7 +449,6 @@ export default function App() {
   const historyRef = useRef(history);
   const convosRef = useRef(convos);
   const profileRef = useRef(profile);
-  const userRef = useRef(currentUser);
 
   useEffect(() => { classesRef.current = classes; }, [classes]);
   useEffect(() => { selectedRef.current = selectedClass; }, [selectedClass]);
@@ -610,10 +457,8 @@ export default function App() {
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { convosRef.current = convos; }, [convos]);
   useEffect(() => { profileRef.current = profile; }, [profile]);
-  useEffect(() => { userRef.current = currentUser; }, [currentUser]);
 
   const buildBundle = () => ({
-    username: userRef.current,
     profile: profileRef.current,
     classes: classesRef.current,
     selected: selectedRef.current,
@@ -625,57 +470,20 @@ export default function App() {
   });
 
   const persistNow = async () => {
-    const uname = userRef.current;
-    if (!uname || !loaded.current) return;
-    try {
-      const existing = await window.storage.get(`sb2:user:${uname}`);
-      const old = existing?.value ? JSON.parse(existing.value) : {};
-      const bundle = { ...buildBundle(), passwordHash: old.passwordHash };
-      await window.storage.set(`sb2:user:${uname}`, JSON.stringify(bundle));
-    } catch {}
+    if (!firebaseUser || !loaded.current) return;
+    await saveUserData(firebaseUser.uid, buildBundle());
   };
 
   const persistTimer = useRef(null);
   const persist = useCallback(() => {
-    if (!loaded.current || !userRef.current) return;
+    if (!loaded.current || !firebaseUser) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(async () => {
       await persistNow();
       setSyncStatus("synced");
       setTimeout(() => setSyncStatus(""), 2000);
-    }, 2000);
-  }, []);
-
-  // Transfer
-  const [showTransfer, setShowTransfer] = useState(false);
-  const [transferCode, setTransferCode] = useState("");
-  const [importCode, setImportCode] = useState("");
-  const [transferMsg, setTransferMsg] = useState("");
-
-  const exportData = () => {
-    const bundle = buildBundle();
-    setTransferCode(btoa(unescape(encodeURIComponent(JSON.stringify(bundle)))));
-    setTransferMsg("Code generated! Copy it and paste on your other device.");
-  };
-
-  const importData = () => {
-    if (!importCode.trim()) return;
-    try {
-      const data = JSON.parse(decodeURIComponent(escape(atob(importCode.trim()))));
-      loaded.current = false;
-      if (data.classes?.length) setClasses(data.classes);
-      if (data.selected) setSelectedClass(data.selected);
-      if (data.difficulty) setDifficulty(data.difficulty);
-      if (data.theme && THEMES[data.theme]) setThemeId(data.theme);
-      if (data.history?.length) setHistory(data.history);
-      if (data.knowledge) { setKnowledgeCache(data.knowledge); kbRef.current = data.knowledge; }
-      if (data.convos) setConvos(data.convos);
-      if (data.profile) setProfile(data.profile);
-      setTransferMsg("Imported!");
-      setImportCode("");
-      setTimeout(() => { loaded.current = true; persist(); }, 300);
-    } catch { setTransferMsg("Invalid code."); }
-  };
+    }, 3000);
+  }, [firebaseUser]);
 
   // Research
   useEffect(() => {
@@ -778,6 +586,7 @@ export default function App() {
     .grad-title{background:linear-gradient(135deg,${t.titleFrom},${t.titleTo});-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
   `;
 
+  // Loading
   if (!authChecked) return <div style={{ minHeight: "100vh", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit',system-ui,sans-serif" }}>
     <style>{globalStyles}</style>
     <div style={{ textAlign: "center" }}>
@@ -786,14 +595,35 @@ export default function App() {
     </div>
   </div>;
 
-  if (!currentUser) return <div style={{ minHeight: "100vh", background: t.bg, color: t.text, fontFamily: "'Outfit','DM Sans',system-ui,sans-serif", display: "flex", justifyContent: "center" }}>
+  // Not logged in — Google sign in screen
+  if (!firebaseUser) return <div style={{ minHeight: "100vh", background: t.bg, color: t.text, fontFamily: "'Outfit','DM Sans',system-ui,sans-serif", display: "flex", justifyContent: "center" }}>
     <style>{globalStyles}</style>
     <div style={{ width: "100%", maxWidth: 540, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-      <AuthScreen t={t} onLogin={handleLogin} />
+      <div style={{ flex: 1, padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", animation: "fadeIn .3s ease" }}>
+        <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
+          <div style={{ fontSize: 52, marginBottom: 8 }}>📚</div>
+          <h1 className="grad-title" style={{ fontSize: 28, fontWeight: 800, marginBottom: 2 }}>AI Study Buddy</h1>
+          <p style={{ color: t.textMuted, fontSize: 13, marginBottom: 32 }}>Sign in to save your classes, quizzes, and progress across all your devices</p>
+
+          {signInError && <div style={{ padding: "8px 12px", background: `${t.red}12`, border: `1px solid ${t.red}30`, borderRadius: 10, marginBottom: 14, fontSize: 13, color: t.red, fontWeight: 600 }}>{signInError}</div>}
+
+          <button onClick={handleGoogleSignIn} style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+            width: "100%", padding: "14px 20px", borderRadius: 14, fontSize: 16, fontWeight: 600,
+            fontFamily: "inherit", cursor: "pointer",
+            background: "#fff", color: "#333", border: "1.5px solid #ddd",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+            Sign in with Google
+          </button>
+        </div>
+      </div>
       <p style={{ textAlign: "center", fontSize: 11, color: t.textMuted, padding: "8px 0 16px" }}>Powered by Claude AI {t.decoChar}</p>
     </div>
   </div>;
 
+  // Logged in — main app
   return <div style={{ minHeight: "100vh", background: t.bg, color: t.text, fontFamily: "'Outfit','DM Sans',system-ui,sans-serif", display: "flex", justifyContent: "center" }}>
     <style>{globalStyles}</style>
     <input ref={fileRef} type="file" multiple accept=".txt,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp" style={{ display: "none" }} onChange={onFiles} />
@@ -830,38 +660,15 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {syncStatus && <span style={{ fontSize: 11, color: t.green, fontWeight: 600 }}>✓</span>}
-            <button onClick={() => { setShowTransfer(true); setTransferCode(""); setImportCode(""); setTransferMsg(""); }} title="Transfer" style={{ background: t.surface, border: `1.5px solid ${t.border}`, borderRadius: 12, width: 38, height: 38, cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: t.shadow }}>📲</button>
             <button onClick={() => setShowThemePicker(!showThemePicker)} style={{ background: t.surface, border: `1.5px solid ${t.border}`, borderRadius: 12, width: 38, height: 38, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: t.shadow }}>{t.decoChar}</button>
             <button onClick={handleLogout} title="Log out" style={{ background: t.surface, border: `1.5px solid ${t.border}`, borderRadius: 12, width: 38, height: 38, cursor: "pointer", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: t.shadow }}>🚪</button>
           </div>
         </div>
 
-        <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: 10, padding: "6px 12px", marginBottom: 14, fontSize: 11, color: t.textMuted }}>
-          Signed in as <strong style={{ color: t.accent }}>@{currentUser}</strong>
+        <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: 10, padding: "6px 12px", marginBottom: 14, fontSize: 11, color: t.textMuted, display: "flex", alignItems: "center", gap: 6 }}>
+          {firebaseUser.photoURL && <img src={firebaseUser.photoURL} alt="" style={{ width: 18, height: 18, borderRadius: "50%" }} />}
+          <span>Signed in as <strong style={{ color: t.accent }}>{firebaseUser.email}</strong></span>
         </div>
-
-        {showTransfer && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: t.surface, borderRadius: 20, padding: 20, maxWidth: 420, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)", maxHeight: "80vh", overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, color: t.text }}>📲 Transfer Data</h3>
-              <button onClick={() => setShowTransfer(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: t.textMuted }}>×</button>
-            </div>
-            {transferMsg && <div style={{ padding: "8px 12px", background: t.surfaceAlt, borderRadius: 10, marginBottom: 12, fontSize: 13, color: t.accent, fontWeight: 600 }}>{transferMsg}</div>}
-            <div style={{ marginBottom: 16 }}>
-              <p style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 6 }}>Export</p>
-              <button onClick={exportData} style={{ ...bs, width: "100%", padding: "10px", marginBottom: 8 }}>Generate Transfer Code</button>
-              {transferCode && <div>
-                <textarea readOnly value={transferCode} style={{ width: "100%", height: 80, padding: 8, borderRadius: 8, border: `1.5px solid ${t.border}`, fontSize: 11, fontFamily: "monospace", color: t.text, background: t.surfaceAlt, resize: "none", wordBreak: "break-all" }} onClick={e => e.target.select()} />
-                <button onClick={() => { navigator.clipboard?.writeText(transferCode); setTransferMsg("Copied!"); }} style={{ ...bs, width: "100%", padding: "8px", fontSize: 12, background: t.green, boxShadow: "none", marginTop: 4 }}>Copy</button>
-              </div>}
-            </div>
-            <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 14 }}>
-              <p style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 6 }}>Import</p>
-              <textarea value={importCode} onChange={e => setImportCode(e.target.value)} placeholder="Paste code here..." style={{ width: "100%", height: 80, padding: 8, borderRadius: 8, border: `1.5px solid ${t.border}`, fontSize: 11, fontFamily: "monospace", color: t.text, background: t.surfaceAlt, resize: "none", wordBreak: "break-all" }} />
-              <button onClick={importData} disabled={!importCode.trim()} style={{ ...bs, width: "100%", padding: "8px", fontSize: 12, marginTop: 4, opacity: importCode.trim() ? 1 : 0.5 }}>Import</button>
-            </div>
-          </div>
-        </div>}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
           {classes.map(c => <button key={c.id} onClick={() => { setSelectedClass(c.id); setPage("modes"); }} style={{
