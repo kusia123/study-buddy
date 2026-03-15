@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { auth, signInWithGoogle, logOut, onAuthChange, saveUserData, loadUserData } from "./firebase";
 
-const GEMINI_KEY = "AIzaSyCnD2pgoVJLQYeXIIxiNqUpRxePYbitMxw";
+const GEMINI_KEY = "AIzaSyB5pa4OdQQNo4S89eVAhcw7-jqzUQF6wbM";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
 
 // ═══════════════════════════════════════════════════════════════════
