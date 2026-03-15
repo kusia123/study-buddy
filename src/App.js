@@ -342,7 +342,7 @@ export default function App() {
   useEffect(() => {
     if (!storageLoaded || !selectedClass || !curClass) return;
     const cached = knowledgeCache[selectedClass];
-    if (cached && (Date.now() - cached.ts) < 3600000) return;
+    return;
     let dead = false;
     (async () => {
       setResearchingClass(selectedClass); researchRef.current = selectedClass;
